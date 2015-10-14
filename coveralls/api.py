@@ -11,7 +11,6 @@ import requests
 
 from .reporter import CoverallReporter
 
-
 log = logging.getLogger('coveralls')
 
 
@@ -22,6 +21,7 @@ class CoverallsException(Exception):
 class Coveralls(object):
     config_filename = '.coveralls.yml'
     api_endpoint = 'https://coveralls.io/api/v1/jobs'
+    webhook_endpoint = 'https://coveralls.io/webhook?repo_token={repo_token}'
     default_client = 'coveralls-python'
 
     def __init__(self, token_required=True, **kwargs):
@@ -63,6 +63,9 @@ class Coveralls(object):
         if os.environ.get('COVERALLS_REPO_TOKEN', None):
             self.config['repo_token'] = os.environ.get('COVERALLS_REPO_TOKEN')
 
+        if os.environ.get('COVERALLS_PARALLEL', None):
+            self.config['parallel'] = os.environ.get('COVERALLS_PARALLEL')
+
         if token_required and not self.config.get('repo_token') and not is_travis_or_circle:
             raise CoverallsException('You have to provide either repo_token in %s, or launch via Travis or CircleCI'
                                      % self.config_filename)
@@ -99,6 +102,39 @@ class Coveralls(object):
                     'text': response.text}}
         else:
             result = {}
+        return result
+
+    def submit_parallel_webhook(self):
+        """Submits a parallel webhook, indicating the build has finished"""
+        build_num = self.config.get('service_job_id')
+        if not build_num:
+            raise CoverallsException("A 'service_job_id' must be provided")
+
+        webhook_url = self.webhook_endpoint.format(
+            repo_token=self.config['repo_token']
+        )
+        payload = {
+            'payload': {
+                'build_num': build_num,
+                'status': 'done'
+            }
+        }
+
+        response = requests.post(webhook_url, data=payload)
+        try:
+            result = response.json()
+        except ValueError:
+            msg = u'Failure to submit data. Response [{status}]: {text}'.format(
+                status=response.status_code, text=response.text
+            )
+            result = {
+                'message': msg
+            }
+        else:
+            if 'error' in result:
+                result = {
+                    'message': result['error']
+                }
         return result
 
     def create_report(self):

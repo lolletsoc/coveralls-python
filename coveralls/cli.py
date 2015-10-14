@@ -9,6 +9,7 @@ so please make sure you're not ruining your own security!
 Usage:
     coveralls [options]
     coveralls debug  [options]
+    coveralls parallel_hook
 
     Debug mode doesn't send anything, just outputs json to stdout, useful for development.
     It also forces verbose output.
@@ -48,6 +49,14 @@ def main(argv=None):
     try:
         token_required = not options['debug'] and not options['--output']
         coverallz = Coveralls(token_required, config_file=options['--rcfile'])
+        if options['parallel_hook']:
+            log.info('Submitting parallel webhook to coveralls.io...')
+            result = coverallz.submit_parallel_webhook()
+            log.info('Parallel webhook submitted!')
+            log.info(result['message'])
+            log.debug(result)
+            return
+
         if options['--merge']:
             coverallz.merge(options['--merge'])
 
