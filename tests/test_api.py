@@ -9,10 +9,11 @@ import shutil
 import tempfile
 import unittest
 import sys
+from random import randint
 
 import coverage
 import sh
-from mock import patch
+from mock import patch, MagicMock
 import pytest
 try:
     import yaml
@@ -20,7 +21,7 @@ except ImportError:
     yaml = None
 
 from coveralls import Coveralls
-from coveralls.api import log
+from coveralls.api import log, CoverallsException
 
 
 class GitBasedTest(unittest.TestCase):
@@ -93,6 +94,11 @@ class NoConfig(unittest.TestCase):
         assert cover.config['service_name'] == 'circle-ci'
         assert cover.config['service_job_id'] == '888'
         assert cover.config['service_pull_request'] == '9999'
+
+    @patch.dict(os.environ, {'TRAVIS': 'True', 'TRAVIS_JOB_ID': '777', 'COVERALLS_PARALLEL': 'True'}, clear=True)
+    def test_parallel_from_env(self):
+        cover = Coveralls()
+        assert cover.config['parallel'] == 'True'
 
 
 class Git(GitBasedTest):
@@ -260,6 +266,61 @@ class WearTest(unittest.TestCase):
         self.setup_mock(mock_requests)
         result = Coveralls(repo_token='xxx').wear()
         assert result == {'message': 'Failure to gather coverage: No data to report'}
+
+
+@patch('coveralls.api.requests')
+class ParallelWebhookTest(unittest.TestCase):
+    def test_exception_thrown_on_no_build_number(self, mock_requests):
+        api = Coveralls(repo_token='xxx')
+        self.assertRaises(CoverallsException, api.submit_parallel_webhook)
+
+    def test_build_num_is_submtited(self, mock_requests):
+        random_build_num = randint(10, 10000)
+        api = Coveralls(repo_token='xxx', service_job_id=random_build_num)
+        api.submit_parallel_webhook()
+
+        payload = mock_requests.post.call_args[1]['data']
+        assert payload['payload']['build_num'] == random_build_num
+
+    def test_repo_token_is_in_url(self, mock_requests):
+        repo_token = 'oaekrgeokg23526okwdfokwef'
+        api = Coveralls(repo_token=repo_token, service_job_id='999')
+        api.submit_parallel_webhook()
+
+        url = mock_requests.post.call_args[0][0]
+        assert repo_token in url
+
+    def test_malformed_json_returns_a_message(self, mock_requests):
+        api = Coveralls(repo_token='xxx', service_job_id=999)
+        mock_response = MagicMock()
+        mock_response.json.side_effect = ValueError
+        mock_requests.post.return_value = mock_response
+
+        assert 'message' in api.submit_parallel_webhook()
+
+    def test_error_is_translated_to_message_if_found(self, mock_requests):
+        api = Coveralls(repo_token='xxx', service_job_id=999)
+
+        mock_response = MagicMock()
+        random_error_msg = randint(100, 99999)
+        mock_response.json.return_value = {
+            'error': random_error_msg
+        }
+        mock_requests.post.return_value = mock_response
+
+        assert api.submit_parallel_webhook()['message'] == random_error_msg
+
+    def test_exact_response_is_returned_on_success(self, mock_requests):
+        api = Coveralls(repo_token='xxx', service_job_id=999)
+
+        mock_response = MagicMock()
+        random_success_msg = randint(100, 99999)
+        mock_response.json.return_value = {
+            'success': random_success_msg
+        }
+        mock_requests.post.return_value = mock_response
+
+        assert api.submit_parallel_webhook()['success'] == random_success_msg
 
 
 def test_output_to_file(tmpdir):
